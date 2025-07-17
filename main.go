@@ -17,17 +17,19 @@ import (
 var db database.Idatabase
 
 func main() {
-	Mongo, err := database.NewMongoDB("mongodb://localhost:27017", "onlineChatDB")
 
+	Mongo, err := database.NewMongoDB("mongodb://localhost:27017", "onlineChatDB")
+	//choosing database
 	useMongo := true
 	if useMongo {
 		db = Mongo
 	}
-
+	//APIs
 	http.HandleFunc("/signUp", signUp)
 	http.HandleFunc("/login", login)
 	http.HandleFunc("/verify", smsVerification)
 	http.HandleFunc("/room", wsRoom)
+	//listen
 	err = http.ListenAndServe(":8080", nil)
 	if err != nil {
 		panic(err)
@@ -49,11 +51,13 @@ func signUp(w http.ResponseWriter, r *http.Request) {
 		PhoneNumber string `json:"phoneNumber"`
 	}
 	var user User
+	//get user info from client
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
+	//insert user info into database
 	err = db.InsertUser(user.Username, user.Password, user.PhoneNumber)
 	if err != nil {
 		http.Error(w, "username or phone number already exist", 400)
@@ -61,15 +65,14 @@ func signUp(w http.ResponseWriter, r *http.Request) {
 
 }
 
-// var verificationCodes = make(map[any]CodeInfo)
-var verificationCodes = make(map[string]CodeInfo) // ID از نوع string
+var verificationCodes = make(map[string]CodeInfo)
 
 type CodeInfo struct {
 	Code      string
 	CreatedAt time.Time
 }
 
-var mu sync.Mutex // برای جلوگیری از race condition
+var mu sync.Mutex // prevent Race Condition
 func login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -87,26 +90,27 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user User
+	//get login info from client
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-
+	//cheack user in database
 	id, phoneNumber, err := db.CheackUserById(user.Username, user.Password)
 	if err != nil {
 		http.Error(w, "username or password is wrong", http.StatusUnauthorized)
 		return
 	}
-
+	//send verification Code
 	code, err := auth.SendSMSVerification(phoneNumber)
 	if err != nil {
 		http.Error(w, "Failed to send verification code", http.StatusInternalServerError)
 		return
 	}
 
-	idStr := fmt.Sprint(id) // تبدیل ID به string
-
+	idStr := fmt.Sprint(id)
+	//lock the map while we add something to it so it prevent Race Condition
 	mu.Lock()
 	verificationCodes[idStr] = CodeInfo{
 		Code:      code,
@@ -139,17 +143,19 @@ func smsVerification(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var data Data
+	//get the info from client
 	err := json.NewDecoder(r.Body).Decode(&data)
 	fmt.Println("data: ", data)
 	if err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-
+	//prevent race condition
 	mu.Lock()
+	//see if user is in map and if it is get the info for the specefic user (info -> code and time )
 	info, ok := verificationCodes[data.ID]
 	mu.Unlock()
-
+	//cheak the validation
 	if !ok {
 		http.Error(w, "no code found", http.StatusNotFound)
 		return
@@ -167,10 +173,11 @@ func smsVerification(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid code", http.StatusUnauthorized)
 		return
 	}
-
+	//delete it so cant be used again
 	mu.Lock()
 	delete(verificationCodes, data.ID)
 	mu.Unlock()
+	//if everything was ok generate JWT
 	tokenStr := auth.GenerateJWT(data.ID, data.Username)
 	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(map[string]string{"token": tokenStr})
@@ -192,7 +199,7 @@ type ChatMessage struct {
 }
 
 func wsRoom(w http.ResponseWriter, r *http.Request) {
-
+	//upgrade http to ws
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
@@ -205,14 +212,14 @@ func wsRoom(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// دریافت توکن و اعتبارسنجی
+	//get msg(token) first(one time)
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		log.Println("reading error", err)
 		return
 	}
 	tokenStr := string(msg)
-
+	//put jwt info the claims and cheack validation
 	claims := &auth.Claims{}
 	tkn, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
 		return auth.Jwtkey, nil
@@ -223,19 +230,18 @@ func wsRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// اضافه کردن به clients با قفل
+	//if everything was ok make conn for user
 	mu.Lock()
 	clients[conn] = true
 	mu.Unlock()
 
-	go broadcastFunc() // فقط یک بار اجرا بشه، بهتره بیرون از wsRoom اجرا شه
+	go broadcastFunc()
 
 	for {
 		_, msgBytes, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("read error: %v", err)
 
-			// حذف از clients با قفل
 			mu.Lock()
 			delete(clients, conn)
 			mu.Unlock()
