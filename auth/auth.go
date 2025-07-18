@@ -4,14 +4,36 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/kavenegar/kavenegar-go"
+	"gopkg.in/gomail.v2"
 )
 
+type Imessage interface {
+	SendMessage(reciever string) (string, error)
+}
+type SMS struct {
+}
+
+func NewSMS() SMS {
+	return SMS{}
+}
+
+func (s SMS) SendMessage(receiver string) (string, error) {
+	code, err := SendSMSVerification(receiver)
+	fmt.Println("using sms")
+	if err != nil {
+		return "", err
+	}
+	return code, nil
+
+}
+
 func SendSMSVerification(to string) (string, error) {
-	code, err := generateSecureCode()
+	code, err := GenerateSecureCode()
 	if err != nil {
 		panic(err)
 	}
@@ -28,7 +50,42 @@ func SendSMSVerification(to string) (string, error) {
 	return code, nil
 
 }
-func generateSecureCode() (string, error) {
+
+type Email struct{}
+
+func NewEmail() Email {
+	return Email{}
+}
+func (e Email) SendMessage(reciever string) (string, error) {
+	fmt.Println("using email")
+	code, err := SendEmailVerificationCode(reciever)
+	if err != nil {
+		return "", err
+	}
+	return code, nil
+}
+func SendEmailVerificationCode(reciever string) (string, error) {
+	code, err := GenerateSecureCode()
+	if err != nil {
+		panic(err)
+	}
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", "pouriyahmn@gmail.com")
+	m.SetHeader("To", reciever)
+	m.SetHeader("Subject", "Your Verification Code")
+	m.SetBody("text/plain", "Your verification code is: "+code)
+
+	d := gomail.NewDialer("smtp.gmail.com", 587, "pouriyahmn@gmail.com", "yezs zujy czwx xiew")
+
+	err = d.DialAndSend(m)
+	if err != nil {
+		return "", err
+	}
+
+	return code, nil
+}
+func GenerateSecureCode() (string, error) {
 	max := big.NewInt(1000000) // ۶ رقم
 	n, err := rand.Int(rand.Reader, max)
 	if err != nil {
@@ -64,4 +121,17 @@ func GenerateJWT(id any, username string) string {
 		panic(err)
 	}
 	return tokenString
+}
+
+func JWTvalidation(tokenStr string) (Claims, error) {
+	claims := &Claims{}
+	tkn, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
+		return Jwtkey, nil
+	})
+	if err != nil || !tkn.Valid {
+
+		return Claims{}, err
+	}
+
+	return *claims, nil
 }
