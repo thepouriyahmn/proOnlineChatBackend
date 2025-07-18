@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	bussinesslogic "onlineChat/bussinessLogic"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -49,7 +50,7 @@ func (m MongoDB) InsertUser(name, pass, phoneNumber string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	count, err := m.Mongo.Collection("users").CountDocuments(ctx, bson.M{"username": name, "phoneNumber": phoneNumber})
+	count, err := m.Mongo.Collection("users").CountDocuments(ctx, bson.M{"username": name /*"phoneNumber": phoneNumber*/})
 	fmt.Println("is: ", count)
 	if err != nil || count > 0 {
 		fmt.Println("reading error: ", err)
@@ -82,4 +83,48 @@ func (m MongoDB) CheackUserById(name, pass string) (any, string, error) {
 
 	}
 	return data.ID, data.PhoneNumber, nil
+}
+func (m MongoDB) InsertMessagesIntoDatabase(username, msg string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	type Doc struct {
+		Username string    `bson:"username"`
+		Message  string    `bson:"message"`
+		Date     time.Time `bson:"time"`
+	}
+	doc := Doc{
+		Username: username,
+		Message:  msg,
+		Date:     time.Now(),
+	}
+	_, err := m.Mongo.Collection("messages").InsertOne(ctx, doc)
+	if err != nil {
+		panic(err)
+	}
+	return nil
+}
+
+// type ChatMessages struct {
+// 	Username string    `bson:"username"`
+// 	Message  string    `bson:"message"`
+// 	Date     time.Time `bson:"time"`
+// }
+
+func (m MongoDB) ReadAllMessagesFromDatabase() ([]bussinesslogic.ChatMessages, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cursor, err := m.Mongo.Collection("messages").Find(ctx, bson.M{})
+	if err != nil {
+		return []bussinesslogic.ChatMessages{}, err
+	}
+	defer cursor.Close(ctx)
+
+	var messages []bussinesslogic.ChatMessages
+	err = cursor.All(ctx, &messages)
+	if err != nil {
+		return []bussinesslogic.ChatMessages{}, err
+	}
+	fmt.Println("messages: ", messages)
+	return messages, nil
+
 }
